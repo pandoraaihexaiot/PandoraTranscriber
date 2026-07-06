@@ -1,0 +1,1509 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Pandora SoundRoom — on-device transcriber</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+  :root{
+    /* HEXA IoT / Pandora — industrial AIoT control-panel palette */
+    --bg:#0a0e17;            /* navy-black base */
+    --panel:#101724;         /* console panel */
+    --panel-2:#172033;       /* raised surface */
+    --line:#26324d;          /* blue-grey hairline */
+    --ink:#e9eef7;           /* cool white */
+    --muted:#8b97af;         /* blue-grey text */
+    --faint:#54607b;
+    --signal:#22d3ee;        /* electric cyan — ready / done / identity */
+    --signal-dim:#0b5566;
+    --hot:#f4b740;           /* gold — working / processing spark */
+    --hot-dim:#6b4e16;
+    --wave:#33415c;
+    --wave-hot:#22d3ee;      /* active waveform = brand cyan */
+    --danger:#f4737d;
+    --sans:"Space Grotesk",system-ui,-apple-system,"Segoe UI",sans-serif;
+    --mono:"IBM Plex Mono",ui-monospace,Menlo,Consolas,monospace;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;padding:0;background:var(--bg);color:var(--ink);font-family:var(--sans);
+    -webkit-font-smoothing:antialiased;}
+  body{min-height:100vh;
+    /* faint hex-node ambience behind the console */
+    background-image:radial-gradient(circle at 18% 0%, rgba(34,211,238,0.05), transparent 42%),
+                     radial-gradient(circle at 100% 100%, rgba(34,211,238,0.035), transparent 46%);
+    background-attachment:fixed;}
+  /* thin cyan brand rail across the very top */
+  body::before{content:"";position:fixed;top:0;left:0;right:0;height:2px;z-index:10;
+    background:linear-gradient(90deg, transparent, var(--signal) 18%, var(--signal) 82%, transparent);
+    box-shadow:0 0 12px 1px rgba(34,211,238,0.45);}
+  ::selection{background:var(--signal);color:#04161b;}
+
+  .wrap{max-width:1180px;margin:0 auto;padding:24px 22px 64px;}
+
+  /* ---- header ---- */
+  .top{display:flex;align-items:center;justify-content:space-between;gap:16px;
+    padding-bottom:16px;border-bottom:1px solid var(--line);}
+  .brand{display:flex;align-items:center;gap:13px;}
+  .mark{flex:0 0 auto;line-height:0;filter:drop-shadow(0 0 8px rgba(34,211,238,0.45));}
+  .mark img{height:40px;width:auto;display:block;}
+  .brandtext{display:flex;flex-direction:column;gap:3px;}
+  .brand h1{font-size:19px;font-weight:700;letter-spacing:-.02em;margin:0;line-height:1;}
+  .brand h1 .hl{color:var(--signal);}
+  .brand .sub{font-family:var(--mono);font-size:10.5px;color:var(--muted);letter-spacing:.12em;text-transform:uppercase;}
+  .brand .sub b{color:var(--signal);font-weight:600;}
+  .status{display:flex;align-items:center;gap:9px;font-family:var(--mono);font-size:12px;color:var(--muted);
+    background:var(--panel);border:1px solid var(--line);border-radius:999px;padding:6px 13px 6px 11px;}
+  .led{width:9px;height:9px;border-radius:50%;background:var(--faint);box-shadow:0 0 0 0 transparent;transition:.3s;}
+  .status.ready .led{background:var(--signal);box-shadow:0 0 10px 1px var(--signal-dim);}
+  .status.working .led{background:var(--hot);box-shadow:0 0 10px 1px var(--hot-dim);animation:pulse 1.1s infinite;}
+  .status.loading .led{background:var(--hot);animation:pulse 1.1s infinite;}
+  .status.error .led{background:var(--danger);}
+  @keyframes pulse{0%,100%{opacity:1}50%{opacity:.35}}
+
+  /* ---- layout ---- */
+  .grid{display:grid;grid-template-columns:330px 1fr;gap:20px;margin-top:20px;}
+  @media (max-width:860px){.grid{grid-template-columns:1fr;}}
+
+  .console{display:flex;flex-direction:column;gap:16px;}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:16px;}
+  .card h2{font-size:11px;font-weight:600;letter-spacing:.09em;text-transform:uppercase;color:var(--muted);
+    margin:0 0 13px;font-family:var(--mono);}
+
+  /* dropzone */
+  .drop{border:1.5px dashed var(--line);border-radius:10px;padding:24px 16px;text-align:center;cursor:pointer;
+    transition:.18s;background:var(--panel-2);}
+  .drop:hover,.drop.over{border-color:var(--signal);background:#1b2842;}
+  .drop .ic{font-size:26px;line-height:1;margin-bottom:8px;color:var(--muted);}
+  .drop .t{font-size:13.5px;font-weight:500;}
+  .drop .h{font-family:var(--mono);font-size:11px;color:var(--faint);margin-top:5px;}
+  .fileinfo{display:none;margin-top:12px;font-family:var(--mono);font-size:12px;color:var(--ink);
+    background:var(--panel-2);border:1px solid var(--line);border-radius:8px;padding:10px 12px;}
+  .fileinfo.show{display:block;}
+  .fileinfo .row{display:flex;justify-content:space-between;gap:10px;}
+  .fileinfo .k{color:var(--muted);}
+
+  label.fld{display:block;font-family:var(--mono);font-size:11px;color:var(--muted);
+    text-transform:uppercase;letter-spacing:.06em;margin:0 0 6px;}
+  select,input[type=text]{width:100%;background:var(--panel-2);color:var(--ink);border:1px solid var(--line);
+    border-radius:8px;padding:9px 11px;font-family:var(--sans);font-size:13.5px;outline:none;}
+  select:focus,input:focus{border-color:var(--signal);}
+  .fld-group{margin-bottom:13px;}
+  .fld-group:last-child{margin-bottom:0;}
+  .hint{font-family:var(--mono);font-size:10.5px;color:var(--faint);margin-top:6px;line-height:1.5;}
+
+  /* trim */
+  .trim-times{display:flex;justify-content:space-between;font-family:var(--mono);font-size:13px;margin-bottom:10px;}
+  .trim-times b{color:var(--hot);font-weight:600;}
+  .quick{display:flex;gap:6px;margin-bottom:13px;flex-wrap:wrap;}
+  .quick button{flex:1;min-width:60px;background:var(--panel-2);border:1px solid var(--line);color:var(--muted);
+    border-radius:7px;padding:7px 4px;font-family:var(--mono);font-size:11px;cursor:pointer;transition:.15s;}
+  .quick button:hover{border-color:var(--signal);color:var(--ink);}
+  .range{margin-bottom:10px;}
+  .range label{display:block;font-family:var(--mono);font-size:10.5px;color:var(--faint);margin-bottom:3px;}
+  input[type=range]{width:100%;-webkit-appearance:none;appearance:none;height:4px;border-radius:3px;
+    background:var(--line);outline:none;cursor:pointer;}
+  input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:15px;height:15px;border-radius:50%;
+    background:var(--hot);cursor:pointer;border:2px solid var(--bg);}
+  input[type=range]::-moz-range-thumb{width:15px;height:15px;border-radius:50%;background:var(--hot);
+    cursor:pointer;border:2px solid var(--bg);}
+
+  /* buttons */
+  .actions{display:flex;gap:9px;}
+  .btn{flex:1;border:none;border-radius:9px;padding:12px;font-family:var(--sans);font-size:14px;font-weight:600;
+    cursor:pointer;transition:.16s;letter-spacing:-.01em;}
+  .btn-go{background:var(--signal);color:#04161b;box-shadow:0 0 0 1px rgba(34,211,238,0.25), 0 4px 14px -4px rgba(34,211,238,0.45);}
+  .btn-go:hover{filter:brightness(1.07);box-shadow:0 0 0 1px rgba(34,211,238,0.4), 0 6px 18px -4px rgba(34,211,238,0.6);}
+  .btn-go:disabled{background:var(--panel-2);color:var(--faint);cursor:not-allowed;filter:none;box-shadow:none;}
+  .btn-stop{background:transparent;border:1px solid var(--danger);color:var(--danger);flex:0 0 auto;padding:12px 16px;}
+  .btn-stop:disabled{opacity:.3;cursor:not-allowed;border-color:var(--line);color:var(--faint);}
+
+  /* progress */
+  .bar{height:5px;background:var(--panel-2);border-radius:3px;overflow:hidden;margin-top:12px;}
+  .bar > i{display:block;height:100%;width:0;background:var(--hot);transition:width .25s;}
+  .logline{font-family:var(--mono);font-size:11px;color:var(--muted);margin-top:9px;min-height:15px;line-height:1.5;
+    word-break:break-word;}
+
+  /* stage */
+  .stage{display:flex;flex-direction:column;gap:16px;min-width:0;}
+  .wavecard{padding:14px 16px 16px;}
+  .wave-shell{position:relative;height:90px;background:var(--panel-2);border-radius:9px;overflow:hidden;}
+  canvas#wave{display:block;width:100%;height:100%;}
+  .playhead{position:absolute;top:0;bottom:0;width:2px;background:var(--wave-hot);left:0;opacity:0;
+    box-shadow:0 0 8px 1px var(--signal);transition:opacity .2s;}
+  .playhead.on{opacity:1;}
+  .wave-empty{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;
+    font-family:var(--mono);font-size:12px;color:var(--faint);}
+  .wave-meta{display:flex;justify-content:space-between;font-family:var(--mono);font-size:11px;
+    color:var(--muted);margin-top:9px;}
+  .wave-meta .pct{color:var(--hot);}
+
+  .out{background:var(--panel);border:1px solid var(--line);border-radius:12px;display:flex;flex-direction:column;
+    min-height:300px;}
+  .out-head{display:flex;align-items:center;justify-content:space-between;padding:13px 16px;
+    border-bottom:1px solid var(--line);gap:10px;flex-wrap:wrap;}
+  .out-head h2{font-size:11px;font-weight:600;letter-spacing:.09em;text-transform:uppercase;color:var(--muted);
+    margin:0;font-family:var(--mono);}
+  .out-tools{display:flex;gap:7px;flex-wrap:wrap;}
+  .tool{background:var(--panel-2);border:1px solid var(--line);color:var(--muted);border-radius:7px;
+    padding:6px 11px;font-family:var(--mono);font-size:11px;cursor:pointer;transition:.15s;}
+  .tool:hover{border-color:var(--signal);color:var(--ink);}
+  .tool:disabled{opacity:.35;cursor:not-allowed;}
+  .toggle{display:flex;align-items:center;gap:6px;font-family:var(--mono);font-size:11px;color:var(--muted);cursor:pointer;}
+  .toggle input{accent-color:var(--hot);}
+
+  /* on/off switch (speaker identification) */
+  .switch{display:flex;align-items:center;gap:9px;font-family:var(--sans);font-size:13.5px;color:var(--ink);cursor:pointer;user-select:none;}
+  .switch input{position:absolute;opacity:0;width:0;height:0;}
+  .switch .track{position:relative;flex:0 0 auto;width:34px;height:19px;border-radius:999px;
+    background:var(--panel-2);border:1px solid var(--line);transition:.18s;}
+  .switch .track::after{content:"";position:absolute;top:2px;left:2px;width:13px;height:13px;border-radius:50%;
+    background:var(--faint);transition:.18s;}
+  .switch input:checked + .track{background:rgba(34,211,238,0.22);border-color:var(--signal);}
+  .switch input:checked + .track::after{transform:translateX(15px);background:var(--signal);
+    box-shadow:0 0 8px 1px var(--signal-dim);}
+  .switch input:focus-visible + .track{outline:2px solid var(--signal);outline-offset:2px;}
+
+  .segs{flex:1;overflow-y:auto;padding:6px 8px;max-height:560px;}
+  .segs-empty{display:flex;flex-direction:column;align-items:center;justify-content:center;height:240px;
+    text-align:center;color:var(--faint);gap:8px;}
+  .segs-empty .ic{font-size:30px;}
+  .segs-empty .t{font-size:13.5px;color:var(--muted);}
+  .segs-empty .h{font-family:var(--mono);font-size:11px;max-width:340px;line-height:1.6;}
+
+  .seg{display:grid;grid-template-columns:62px 96px 1fr;gap:10px;align-items:start;padding:8px 10px;
+    border-radius:8px;transition:background .12s;}
+  .seg:hover{background:var(--panel-2);}
+  .seg-time{font-family:var(--mono);font-size:11px;color:var(--hot);padding-top:3px;}
+  .seg-spk{background:transparent;border:1px solid transparent;border-bottom:1px solid var(--line);
+    color:var(--signal);font-family:var(--mono);font-size:11.5px;border-radius:0;padding:3px 4px;width:100%;}
+  .seg-spk::placeholder{color:var(--faint);}
+  .seg-spk:focus{border-bottom-color:var(--signal);}
+  .seg-txt{font-size:14px;line-height:1.55;color:var(--ink);white-space:pre-wrap;outline:none;
+    border:1px solid transparent;border-radius:6px;padding:2px 5px;margin:-2px -5px;transition:.12s;}
+  .seg-txt[contenteditable="true"]:hover{background:var(--panel-2);}
+  .seg-txt[contenteditable="true"]:focus{border-color:var(--signal);background:var(--panel-2);}
+  @media (max-width:520px){.seg{grid-template-columns:54px 1fr;}.seg-spk{grid-column:2;}.seg-time{grid-row:1;}}
+
+  /* speaker-turn divider (inferred from silence gaps) */
+  .turn-div{display:flex;align-items:center;gap:9px;padding:6px 10px 2px;}
+  .turn-div::before,.turn-div::after{content:"";height:1px;flex:1;background:var(--line);}
+  .turn-div span{font-family:var(--mono);font-size:9.5px;letter-spacing:.08em;text-transform:uppercase;
+    color:var(--faint);white-space:nowrap;}
+
+  /* batch queue */
+  .qlist{display:flex;flex-direction:column;gap:5px;max-height:240px;overflow-y:auto;margin-bottom:10px;}
+  .qrow{display:grid;grid-template-columns:11px 1fr auto 18px;gap:8px;align-items:center;
+    background:var(--panel-2);border:1px solid var(--line);border-radius:7px;padding:7px 9px;}
+  .qstat{width:9px;height:9px;border-radius:50%;background:var(--faint);}
+  .qstat[data-st="ready"]{background:var(--muted);}
+  .qstat[data-st="decoding"],.qstat[data-st="active"]{background:var(--hot);animation:pulse 1.1s infinite;}
+  .qstat[data-st="done"]{background:var(--signal);box-shadow:0 0 8px 1px var(--signal-dim);}
+  .qstat[data-st="error"]{background:var(--danger);}
+  .qstat[data-st="stopped"]{background:var(--faint);}
+  .qname{font-family:var(--mono);font-size:11.5px;color:var(--ink);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+  .qlen{font-family:var(--mono);font-size:10.5px;color:var(--muted);white-space:nowrap;}
+  .qx{background:none;border:none;color:var(--faint);cursor:pointer;font-size:16px;line-height:1;padding:0;}
+  .qx:hover{color:var(--danger);}
+  .qx:disabled{opacity:.25;cursor:not-allowed;}
+
+  /* grouped transcript (batch) */
+  .filegroup{border-bottom:1px solid var(--line);padding-bottom:6px;margin-bottom:6px;}
+  .filegroup:last-child{border-bottom:none;margin-bottom:0;}
+  .filehdr{display:flex;justify-content:space-between;align-items:baseline;gap:10px;flex-wrap:wrap;
+    padding:9px 10px 7px;position:sticky;top:0;background:var(--panel);z-index:1;}
+  .fh-name{font-family:var(--mono);font-size:12px;color:var(--signal);font-weight:600;
+    overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:70%;}
+  .fh-meta{font-family:var(--mono);font-size:10.5px;color:var(--muted);white-space:nowrap;}
+  .qempty{font-family:var(--mono);font-size:11px;color:var(--faint);padding:2px 12px 8px;}
+
+  /* restore banner */
+  .restore{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;
+    background:rgba(34,211,238,0.06);border:1px solid var(--signal-dim);border-radius:10px;
+    padding:10px 13px;margin-bottom:11px;}
+  .restore-txt{display:flex;flex-direction:column;gap:2px;min-width:0;}
+  .restore-txt b{font-size:13.5px;color:var(--ink);}
+  .restore-meta{font-family:var(--mono);font-size:10.5px;color:var(--muted);
+    overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:52ch;}
+  .restore-actions{display:flex;gap:7px;flex:0 0 auto;}
+  .tool-hot{border-color:var(--signal);color:var(--signal);}
+  .tool-hot:hover{background:rgba(34,211,238,0.12);}
+
+  /* speaker legend (names panel) */
+  .spk-list{display:flex;flex-direction:column;gap:6px;}
+  .spk-row{display:grid;grid-template-columns:11px 1fr auto;gap:9px;align-items:center;
+    background:var(--panel-2);border:1px solid var(--line);border-radius:7px;padding:6px 9px;}
+  .spk-dot{width:9px;height:9px;border-radius:50%;}
+  .spk-name{background:transparent;border:1px solid transparent;border-radius:6px;color:var(--ink);
+    font-family:var(--sans);font-size:13px;padding:4px 6px;min-width:0;transition:.12s;}
+  .spk-name:hover{border-color:var(--line);}
+  .spk-name:focus{border-color:var(--signal);outline:none;background:var(--bg);}
+  .spk-name::placeholder{color:var(--muted);}
+  .spk-time{font-family:var(--mono);font-size:10.5px;color:var(--muted);white-space:nowrap;}
+  /* compact legend inside a batch file group */
+  .spk-legend{display:flex;flex-wrap:wrap;gap:6px;padding:2px 10px 8px;}
+  .spk-chip{display:inline-flex;align-items:center;gap:6px;background:var(--panel-2);
+    border:1px solid var(--line);border-radius:999px;padding:3px 9px 3px 7px;}
+  .spk-chip .spk-name{font-size:12px;padding:2px 4px;width:110px;}
+
+  .note{font-family:var(--mono);font-size:11px;color:var(--faint);line-height:1.7;}
+  .note b{color:var(--muted);font-weight:600;}
+  .note .pill{color:var(--signal);}
+  a{color:var(--signal);}
+  .foot{margin-top:26px;font-family:var(--mono);font-size:10.5px;color:var(--faint);text-align:center;line-height:1.7;}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <div class="top">
+    <div class="brand">
+      <span class="mark" aria-hidden="true"><img src="data:image/png;base64,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" alt="HEXA IoT Pandora" /></span>
+      <div class="brandtext">
+        <h1>Pandora <span class="hl">SoundRoom</span></h1>
+        <span class="sub"><b>HEXA IoT</b> · on-device transcriber</span>
+      </div>
+    </div>
+    <div class="status" id="status"><span class="led"></span><span id="statusText">Idle</span></div>
+  </div>
+
+  <div class="grid">
+
+    <!-- LEFT: console -->
+    <aside class="console">
+
+      <div class="card">
+        <h2>Source audio</h2>
+        <div class="drop" id="drop">
+          <div class="ic">⊕</div>
+          <div class="t">Drop audio / video here</div>
+          <div class="h">one file, or up to 20 at once · mp3 · m4a · wav · mp4 · webm · ogg / opus</div>
+        </div>
+        <input type="file" id="file" accept="audio/*,video/*" multiple hidden />
+        <div class="fileinfo" id="fileinfo">
+          <div class="row"><span class="k">file</span><span id="fName">—</span></div>
+          <div class="row"><span class="k">length</span><span id="fLen">—</span></div>
+          <div class="row"><span class="k">decoded</span><span id="fRate">—</span></div>
+        </div>
+      </div>
+
+      <div class="card" id="batchCard" style="display:none">
+        <h2>Batch queue <span id="batchCount" style="color:var(--signal)"></span></h2>
+        <div class="qlist" id="qlist"></div>
+        <button class="tool" id="clearBatch" style="width:100%">Clear all</button>
+        <div class="hint" style="margin-top:9px">WhatsApp voice notes (.ogg / .opus) work directly. Each file is transcribed in full and shown as its own section.</div>
+      </div>
+
+      <div class="card">
+        <h2>Engine</h2>
+        <div class="fld-group">
+          <label class="fld" for="model">Model</label>
+          <select id="model">
+            <option value="Xenova/whisper-tiny">tiny — fastest, rough (~75 MB)</option>
+            <option value="Xenova/whisper-base">base — balanced (~145 MB)</option>
+            <option value="Xenova/whisper-small" selected>small — accurate, slower (~480 MB)</option>
+            <option value="onnx-community/whisper-large-v3-turbo">large-v3 turbo — best accuracy · large download · WebGPU advised</option>
+          </select>
+          <div class="hint">First run downloads the model once, then it's cached by your browser. <b>turbo</b> is a large download and is heavy on CPU — pick it only with WebGPU.</div>
+        </div>
+        <div class="fld-group">
+          <label class="fld" for="lang">Language</label>
+          <select id="lang">
+            <option value="auto" selected>Auto-detect</option>
+            <option value="english">English</option>
+            <option value="malay">Malay / Bahasa</option>
+            <option value="chinese">Chinese (Mandarin)</option>
+          </select>
+          <div class="hint" id="gpuHint">Checking acceleration…</div>
+        </div>
+        <div class="fld-group">
+          <label class="switch"><input type="checkbox" id="diarize" /><span class="track"></span>Identify speakers (up to 6 + others)</label>
+          <div class="hint">Adds two small voice models (~32&nbsp;MB total, downloaded once). The 6 people who speak the most become <b>Person 1–6</b>; everyone else is grouped as <b>Person 7</b>. Fill in real names afterwards in the Speakers panel.</div>
+        </div>
+      </div>
+
+      <div class="card" id="spkCard" style="display:none">
+        <h2>Speakers</h2>
+        <div class="spk-list" id="spkList"></div>
+        <div class="hint" style="margin-top:9px">Type a name to relabel every line by that person — exports update too. Person 7 collects minor speakers.</div>
+      </div>
+
+      <div class="card" id="trimCard">
+        <h2>Trim</h2>
+        <div class="trim-times">
+          <span>start <b id="tStart">00:00</b></span>
+          <span>end <b id="tEnd">00:00</b></span>
+        </div>
+        <div class="quick">
+          <button data-q="full">Full</button>
+          <button data-q="last60">Last 60m</button>
+          <button data-q="last30">Last 30m</button>
+          <button data-q="first10">First 10m</button>
+        </div>
+        <div class="range">
+          <label>start</label>
+          <input type="range" id="rStart" min="0" max="100" value="0" step="1" />
+        </div>
+        <div class="range">
+          <label>end</label>
+          <input type="range" id="rEnd" min="0" max="100" value="100" step="1" />
+        </div>
+        <div class="hint">Selected span <b id="tSpan" style="color:var(--ink)">00:00</b> · transcription time scales with this.</div>
+      </div>
+
+      <div class="card">
+        <div class="hint" id="eta" style="margin:0 0 11px">Load a file to see a time estimate.</div>
+        <div class="actions">
+          <button class="btn btn-go" id="go" disabled>Transcribe</button>
+          <button class="btn btn-stop" id="stop" disabled>Stop</button>
+        </div>
+        <div class="bar"><i id="prog"></i></div>
+        <div class="logline" id="log">Load an audio file to begin.</div>
+      </div>
+
+    </aside>
+
+    <!-- RIGHT: stage -->
+    <section class="stage">
+
+      <div class="card wavecard" id="waveCard">
+        <div class="wave-shell">
+          <canvas id="wave"></canvas>
+          <div class="playhead" id="playhead"></div>
+          <div class="wave-empty" id="waveEmpty">no signal</div>
+        </div>
+        <div class="wave-meta">
+          <span id="waveLabel">waveform</span>
+          <span class="pct" id="wavePct"></span>
+        </div>
+      </div>
+
+      <div class="out">
+        <div class="restore" id="restoreBar" style="display:none">
+          <div class="restore-txt">
+            <b>Previous session found</b>
+            <span class="restore-meta" id="restoreMeta"></span>
+          </div>
+          <div class="restore-actions">
+            <button class="tool tool-hot" id="restoreYes">Restore</button>
+            <button class="tool" id="restoreNo">Discard</button>
+          </div>
+        </div>
+        <div class="out-head">
+          <h2>Transcript</h2>
+          <div class="out-tools">
+            <label class="toggle"><input type="checkbox" id="tsToggle" checked />timestamps</label>
+            <button class="tool" id="copyBtn" disabled>Copy</button>
+            <button class="tool" id="txtBtn" disabled>.txt</button>
+            <button class="tool" id="srtBtn" disabled>.srt</button>
+            <button class="tool" id="vttBtn" disabled>.vtt</button>
+            <button class="tool" id="jsonBtn" disabled>.json</button>
+            <button class="tool" id="mdBtn" disabled>.md</button>
+          </div>
+        </div>
+        <div class="segs" id="segs">
+          <div class="segs-empty" id="segsEmpty">
+            <div class="ic">◌</div>
+            <div class="t">Transcript will appear here</div>
+            <div class="h">Everything runs locally in your browser. Audio is never uploaded.
+              Your transcript auto-saves as it goes — if the tab closes mid-job, you can restore it on your next visit.</div>
+          </div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="note">
+          <b>How it works.</b> Whisper runs on-device via Transformers.js (WebGPU when available, otherwise CPU).
+          <span class="pill">Nothing leaves this page.</span> Drop a single file to trim and transcribe a span, or
+          drop up to 20 at once (e.g. WhatsApp <b>.ogg / .opus</b> voice notes) to transcribe them all in one run —
+          each appears as its own section with its own export.
+          For one long recording, trim to the part you need; a 1-hour span on the <b>base</b> model takes a few minutes with WebGPU, longer on CPU.
+          Turn on <b>Identify speakers</b> to label lines by person — the 6 who talk the most become Person&nbsp;1–6 (others group as Person&nbsp;7), and you can fill in their real names afterwards.
+        </div>
+      </div>
+
+    </section>
+  </div>
+
+  <div class="foot"><b style="color:var(--signal)">Pandora SoundRoom</b> · on-device transcriber · audio never leaves your browser<br>
+    Developed by <a href="https://www.hexaiot.com.my" target="_blank" rel="noopener">www.hexaiot.com.my</a></div>
+</div>
+
+<script type="module">
+import { pipeline, env, AutoModelForAudioFrameClassification, AutoProcessor, AutoModel } from 'https://cdn.jsdelivr.net/npm/@huggingface/transformers@3';
+env.allowLocalModels = false;
+
+const $ = id => document.getElementById(id);
+const els = {
+  status:$('status'), statusText:$('statusText'),
+  drop:$('drop'), file:$('file'), fileinfo:$('fileinfo'),
+  fName:$('fName'), fLen:$('fLen'), fRate:$('fRate'),
+  model:$('model'), lang:$('lang'), gpuHint:$('gpuHint'), diarize:$('diarize'),
+  tStart:$('tStart'), tEnd:$('tEnd'), tSpan:$('tSpan'),
+  rStart:$('rStart'), rEnd:$('rEnd'),
+  go:$('go'), stop:$('stop'), prog:$('prog'), log:$('log'),
+  wave:$('wave'), playhead:$('playhead'), waveEmpty:$('waveEmpty'),
+  waveLabel:$('waveLabel'), wavePct:$('wavePct'),
+  segs:$('segs'), segsEmpty:$('segsEmpty'),
+  tsToggle:$('tsToggle'), copyBtn:$('copyBtn'), txtBtn:$('txtBtn'), srtBtn:$('srtBtn'),
+  vttBtn:$('vttBtn'), jsonBtn:$('jsonBtn'), mdBtn:$('mdBtn'), eta:$('eta'),
+  batchCard:$('batchCard'), batchCount:$('batchCount'), qlist:$('qlist'), clearBatch:$('clearBatch'),
+  trimCard:$('trimCard'), waveCard:$('waveCard'), spkCard:$('spkCard'), spkList:$('spkList'),
+  restoreBar:$('restoreBar'), restoreMeta:$('restoreMeta'), restoreYes:$('restoreYes'), restoreNo:$('restoreNo'),
+};
+
+const SR = 16000;
+const WIN_SEC = 60;        // seconds of audio "owned" per pass
+const OVERLAP_SEC = 3;     // acoustic context carried on each side of a pass
+const EPS = 0.02;          // boundary epsilon for chunk ownership
+const SILENCE_RMS = 0.0025;// below this a window is treated as silence and skipped
+const TURN_GAP = 1.2;      // gap (s) between segments that suggests a speaker turn
+const DUP_WINDOW = 0.5;    // collapse identical text starting within this many seconds
+const MAX_BATCH = 20;      // most files allowed in a single batch
+const DIAR_MODEL = 'onnx-community/pyannote-segmentation-3.0';
+const EMB_MODEL = 'onnx-community/wespeaker-voxceleb-resnet34-LM';
+const DIAR_MAX_SPK = 6;   // main speakers kept; everyone else folds into…
+const OTHERS_GID = 6;     // …"Person 7" (others)
+const DIAR_WIN = 300;     // segmentation window (s), contiguous — identity comes from embeddings
+const MIN_TURN = 0.35;    // ignore blips shorter than this (s); too short to fingerprint
+const EMB_MAX_SEC = 8;    // fingerprint at most this many seconds from a turn's centre
+const CLUST_TH = 0.68;    // cosine-distance merge threshold (avg linkage); lower = more speakers
+
+// very rough compute-time multipliers (seconds of processing per second of audio)
+const RT_FACTOR = {
+  webgpu:{ 'Xenova/whisper-tiny':0.06, 'Xenova/whisper-base':0.12, 'Xenova/whisper-small':0.30, 'onnx-community/whisper-large-v3-turbo':0.22 },
+  cpu:   { 'Xenova/whisper-tiny':0.40, 'Xenova/whisper-base':0.90, 'Xenova/whisper-small':2.20, 'onnx-community/whisper-large-v3-turbo':6.00 },
+};
+
+const state = {
+  mode:'single',            // 'single' | 'batch'
+  file:null, audio:null, duration:0,
+  trimStart:0, trimEnd:0,
+  transcriber:null, currentModel:null,
+  segments:[], running:false, hasWebGPU:false,
+  usedModel:null, usedLang:null,
+  diarizer:null, diarizerProc:null, embedder:null, embedderProc:null,
+  speakers:[],              // single-mode legend: [{gid, name, time}]
+  batch:[],                 // [{file,name,audio,duration,segments,status,error,usedLang}]
+};
+
+/* ---------- helpers ---------- */
+function fmt(sec){
+  sec = Math.max(0, sec||0);
+  const h=Math.floor(sec/3600), m=Math.floor((sec%3600)/60), s=Math.floor(sec%60);
+  return (h>0? String(h).padStart(2,'0')+':':'')+String(m).padStart(2,'0')+':'+String(s).padStart(2,'0');
+}
+function srtTime(sec){
+  sec=Math.max(0,sec||0);
+  const h=Math.floor(sec/3600), m=Math.floor((sec%3600)/60), s=Math.floor(sec%60), ms=Math.floor((sec-Math.floor(sec))*1000);
+  return `${String(h).padStart(2,'0')}:${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')},${String(ms).padStart(3,'0')}`;
+}
+function esc(s){return (s||'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));}
+function setStatus(kind,text){els.status.className='status '+kind; els.statusText.textContent=text;}
+function cssVar(n){return getComputedStyle(document.documentElement).getPropertyValue(n).trim();}
+
+/* ---------- file decode ---------- */
+async function readToArrayBuffer(file){ return await file.arrayBuffer(); }
+
+function resample(input, fromRate, toRate){
+  if(fromRate===toRate) return input;
+  const ratio=fromRate/toRate, newLen=Math.round(input.length/ratio), out=new Float32Array(newLen);
+  for(let i=0;i<newLen;i++){
+    const idx=i*ratio, i0=Math.floor(idx), i1=Math.min(i0+1,input.length-1), f=idx-i0;
+    out[i]=input[i0]*(1-f)+input[i1]*f;
+  }
+  return out;
+}
+
+async function decodeFile(file){
+  let decoded, ctx;
+  try{
+    ctx=new AudioContext({sampleRate:SR});
+    decoded=await ctx.decodeAudioData(await readToArrayBuffer(file));
+  }catch(e){
+    try{ if(ctx) await ctx.close(); }catch(_){}
+    ctx=new AudioContext();
+    decoded=await ctx.decodeAudioData(await readToArrayBuffer(file));
+  }
+  const srcRate=decoded.sampleRate;
+  let mono;
+  if(decoded.numberOfChannels>1){
+    const a=decoded.getChannelData(0), b=decoded.getChannelData(1);
+    mono=new Float32Array(a.length);
+    for(let i=0;i<a.length;i++) mono[i]=(a[i]+b[i])*0.5;
+  }else{
+    mono=decoded.getChannelData(0).slice();
+  }
+  try{ await ctx.close(); }catch(_){}
+  const audio = srcRate===SR ? mono : resample(mono, srcRate, SR);
+  return { audio, srcRate, duration: audio.length/SR };
+}
+
+/* ---------- waveform ---------- */
+function drawWave(){
+  const c=els.wave, dpr=window.devicePixelRatio||1;
+  const w=c.clientWidth||600, h=c.clientHeight||90;
+  c.width=w*dpr; c.height=h*dpr;
+  const ctx=c.getContext('2d'); ctx.setTransform(dpr,0,0,dpr,0,0);
+  ctx.clearRect(0,0,w,h);
+  if(!state.audio) return;
+  const mid=h/2, n=state.audio.length, per=Math.max(1,Math.floor(n/w));
+  ctx.strokeStyle=cssVar('--wave'); ctx.lineWidth=1; ctx.beginPath();
+  for(let x=0;x<w;x++){
+    let mn=1,mx=-1; const s=x*per, e=Math.min(s+per,n);
+    for(let i=s;i<e;i++){const v=state.audio[i]; if(v<mn)mn=v; if(v>mx)mx=v;}
+    if(mn>mx){mn=0;mx=0;}
+    ctx.moveTo(x+.5, mid+mn*mid*0.92);
+    ctx.lineTo(x+.5, mid+mx*mid*0.92);
+  }
+  ctx.stroke();
+  // trim shading
+  if(state.duration>0){
+    const x0=(state.trimStart/state.duration)*w, x1=(state.trimEnd/state.duration)*w;
+    ctx.fillStyle='rgba(10,14,23,0.64)';
+    ctx.fillRect(0,0,x0,h); ctx.fillRect(x1,0,w-x1,h);
+    ctx.strokeStyle=cssVar('--hot'); ctx.lineWidth=1.2;
+    ctx.beginPath(); ctx.moveTo(x0,0);ctx.lineTo(x0,h);ctx.moveTo(x1,0);ctx.lineTo(x1,h);ctx.stroke();
+  }
+}
+function setPlayhead(frac){
+  const shell=els.playhead.parentElement, w=shell.clientWidth;
+  const x0=(state.trimStart/state.duration)*w, x1=(state.trimEnd/state.duration)*w;
+  els.playhead.style.left=(x0+(x1-x0)*Math.min(1,Math.max(0,frac)))+'px';
+}
+
+/* ---------- trim controls ---------- */
+function etaFmt(s){ s=Math.max(1,Math.round(s)); if(s<90) return s+'s'; return Math.round(s/60)+' min'; }
+function updateEta(){
+  const dev = state.hasWebGPU ? 'webgpu' : 'cpu';
+  const f = (RT_FACTOR[dev] || RT_FACTOR.cpu)[els.model.value] ?? 0.6;
+  const devLabel = state.hasWebGPU?'WebGPU':'CPU';
+  if(state.mode==='batch'){
+    if(!state.batch.length){ els.eta.textContent='Add files to see a time estimate.'; return; }
+    const span=state.batch.reduce((a,it)=>a+(it.duration||0),0);
+    if(span<1){ els.eta.textContent='Decoding files to estimate time…'; return; }
+    const sec=span*f;
+    els.eta.textContent=`${state.batch.length} files · rough estimate: ${etaFmt(sec*0.6)}–${etaFmt(sec*1.6)} on ${devLabel} · first run also downloads the model.`;
+    return;
+  }
+  if(!state.duration){ els.eta.textContent='Load a file to see a time estimate.'; return; }
+  const span=Math.max(0, state.trimEnd-state.trimStart);
+  const sec = span*f;
+  els.eta.textContent = span<1
+    ? 'Select a span to estimate processing time.'
+    : `Rough estimate: ${etaFmt(sec*0.6)}–${etaFmt(sec*1.6)} on ${devLabel} · first run also downloads the model.`;
+}
+function refreshTrimLabels(){
+  els.tStart.textContent=fmt(state.trimStart);
+  els.tEnd.textContent=fmt(state.trimEnd);
+  els.tSpan.textContent=fmt(Math.max(0,state.trimEnd-state.trimStart));
+  updateEta();
+}
+function syncFromRanges(){
+  if(!state.duration) return;
+  let a=(+els.rStart.value/1000)*state.duration;
+  let b=(+els.rEnd.value/1000)*state.duration;
+  if(a>b-1){ a=Math.max(0,b-1); els.rStart.value=Math.round(a/state.duration*1000); }
+  state.trimStart=a; state.trimEnd=b;
+  refreshTrimLabels(); drawWave();
+}
+function setTrim(a,b){
+  state.trimStart=Math.max(0,a); state.trimEnd=Math.min(state.duration,b);
+  els.rStart.value=Math.round(state.trimStart/state.duration*1000);
+  els.rEnd.value=Math.round(state.trimEnd/state.duration*1000);
+  refreshTrimLabels(); drawWave();
+}
+
+/* ---------- model ---------- */
+function dtypeFor(modelId, device){
+  const heavy = /turbo|large/i.test(modelId);
+  if(device === 'webgpu'){
+    // turbo on webgpu MUST use a non-q8 decoder (q8 decoders output gibberish on webgpu)
+    return heavy ? {encoder_model:'fp32', decoder_model_merged:'q4'} : 'fp32';
+  }
+  return 'q8'; // wasm/CPU: q8 is correct for all sizes
+}
+async function ensureModel(modelId){
+  if(state.transcriber && state.currentModel===modelId) return state.transcriber;
+  state.transcriber=null;
+  setStatus('loading','Loading model…');
+  const onProg=p=>{
+    if(p.status==='progress' && p.file && p.total){
+      const pct=Math.round(p.loaded/p.total*100);
+      els.prog.style.width=pct+'%';
+      els.log.textContent=`Downloading ${p.file} — ${pct}%`;
+    }else if(p.status==='ready'){
+      els.log.textContent='Model ready.';
+    }
+  };
+  let t;
+  try{
+    const device = state.hasWebGPU ? 'webgpu' : 'wasm';
+    t=await pipeline('automatic-speech-recognition', modelId,
+      {device, dtype:dtypeFor(modelId, device), progress_callback:onProg});
+  }catch(e){
+    els.log.textContent='Acceleration unavailable — using CPU…';
+    t=await pipeline('automatic-speech-recognition', modelId,
+      {device:'wasm', dtype:dtypeFor(modelId,'wasm'), progress_callback:onProg});
+  }
+  state.transcriber=t; state.currentModel=modelId;
+  return t;
+}
+
+/* ---------- speaker identification (segmentation + voice fingerprints) ---------- */
+// Pipeline: pyannote-segmentation finds speech turns -> wespeaker embeds each turn
+// (a voice fingerprint) -> fingerprints are clustered into people across the whole
+// recording -> top DIAR_MAX_SPK by talk time become Person 1..6, the rest Person 7.
+async function ensureDiarizer(){
+  const onProg=p=>{
+    if(p.status==='progress' && p.file && p.total){
+      const pct=Math.round(p.loaded/p.total*100);
+      els.prog.style.width=pct+'%';
+      els.log.textContent=`Speaker models — ${p.file} ${pct}%`;
+    }
+  };
+  if(!state.diarizer || !state.diarizerProc){
+    setStatus('loading','Loading speaker models…');
+    state.diarizer = await AutoModelForAudioFrameClassification.from_pretrained(DIAR_MODEL, {progress_callback:onProg});
+    state.diarizerProc = await AutoProcessor.from_pretrained(DIAR_MODEL, {progress_callback:onProg});
+  }
+  if(!state.embedder || !state.embedderProc){
+    setStatus('loading','Loading speaker models…');
+    state.embedder = await AutoModel.from_pretrained(EMB_MODEL, {progress_callback:onProg});
+    state.embedderProc = await AutoProcessor.from_pretrained(EMB_MODEL, {progress_callback:onProg});
+  }
+}
+// segmentation on one slice -> speech turns [{start,end}] in absolute time
+async function segmentClip(slice, base){
+  const inputs = await state.diarizerProc(slice);
+  const { logits } = await state.diarizer(inputs);
+  const res = state.diarizerProc.post_process_speaker_diarization(logits, slice.length);
+  const turns = (res && res[0]) ? res[0] : [];
+  return turns.filter(t=>t.end-t.start>=MIN_TURN)
+              .map(t=>({start:t.start+base, end:t.end+base}));
+}
+// voice fingerprint for one turn (L2-normalised Float32Array)
+async function embedTurn(audio, turn){
+  const mid=(turn.start+turn.end)/2;
+  const half=Math.min((turn.end-turn.start)/2, EMB_MAX_SEC/2);
+  const a=Math.max(0, Math.floor((mid-half)*SR)), b=Math.min(audio.length, Math.ceil((mid+half)*SR));
+  const inputs=await state.embedderProc(audio.slice(a,b));
+  const out=await state.embedder(inputs);
+  const t = out.embeddings || out.logits || Object.values(out)[0];
+  const v = Float32Array.from(t.data);
+  let n=0; for(let i=0;i<v.length;i++) n+=v[i]*v[i];
+  n=Math.sqrt(n)||1; for(let i=0;i<v.length;i++) v[i]/=n;
+  return v;
+}
+function cosDist(a,b){ let d=0; for(let i=0;i<a.length;i++) d+=a[i]*b[i]; return 1-d; }
+// average-linkage agglomerative clustering on cosine distance; returns cluster id per item
+function clusterEmbeddings(embs, threshold){
+  const n=embs.length;
+  if(!n) return [];
+  let clusters=embs.map((e,i)=>({items:[i]}));
+  const D=Array.from({length:n},()=>new Float32Array(n));
+  for(let i=0;i<n;i++) for(let j=i+1;j<n;j++){ const d=cosDist(embs[i],embs[j]); D[i][j]=d; D[j][i]=d; }
+  const avg=(A,B)=>{ let s=0; for(const i of A.items) for(const j of B.items) s+=D[i][j]; return s/(A.items.length*B.items.length); };
+  while(clusters.length>1){
+    let bi=-1,bj=-1,bd=Infinity;
+    for(let i=0;i<clusters.length;i++) for(let j=i+1;j<clusters.length;j++){
+      const d=avg(clusters[i],clusters[j]); if(d<bd){bd=d;bi=i;bj=j;}
+    }
+    if(bd>threshold) break;
+    clusters[bi].items.push(...clusters[bj].items);
+    clusters.splice(bj,1);
+  }
+  const ids=new Array(n);
+  clusters.forEach((c,ci)=>c.items.forEach(i=>ids[i]=ci));
+  return ids;
+}
+// keep the DIAR_MAX_SPK clusters with the most talk time -> gid 0..5 by first
+// appearance; every other cluster -> OTHERS_GID ("Person 7")
+function rankSpeakers(turns, clusterIds){
+  const time={}, first={};
+  turns.forEach((t,i)=>{
+    const c=clusterIds[i];
+    time[c]=(time[c]||0)+(t.end-t.start);
+    if(first[c]==null || t.start<first[c]) first[c]=t.start;
+  });
+  const kept=Object.keys(time).map(Number)
+    .sort((a,b)=>time[b]-time[a]).slice(0,DIAR_MAX_SPK)
+    .sort((a,b)=>first[a]-first[b]);            // number by first appearance
+  const gidOf={}; kept.forEach((c,i)=>gidOf[c]=i);
+  const out=turns.map((t,i)=>({start:t.start, end:t.end,
+    gid: gidOf[clusterIds[i]]!=null ? gidOf[clusterIds[i]] : OTHERS_GID}));
+  const speakers=kept.map((c,i)=>({gid:i, name:'', time:time[c]}));
+  const othersTime=Object.keys(time).map(Number).filter(c=>gidOf[c]==null)
+    .reduce((a,c)=>a+time[c],0);
+  if(othersTime>0) speakers.push({gid:OTHERS_GID, name:'', time:othersTime});
+  return {turns:out, speakers};
+}
+// full pipeline over audio[start..end] -> {turns:[{start,end,gid}], speakers:[{gid,name,time}]}
+async function diarizeAudio(audio, start, end, hooks){
+  hooks=hooks||{};
+  const total=Math.max(0.001,end-start);
+  // 1) segmentation (≈40% of the progress bar)
+  let turns=[];
+  for(let ws=start; ws<end; ws+=DIAR_WIN){
+    if(hooks.shouldStop && hooks.shouldStop()) return {turns:[],speakers:[]};
+    const wEnd=Math.min(ws+DIAR_WIN,end);
+    try{ turns.push(...await segmentClip(audio.slice(Math.floor(ws*SR),Math.floor(wEnd*SR)), ws)); }
+    catch(e){ console.error('segment',e); if(hooks.onError)hooks.onError(e); }
+    if(hooks.onProgress) hooks.onProgress(0.4*(wEnd-start)/total);
+    await new Promise(r=>setTimeout(r,0));
+  }
+  turns.sort((a,b)=>a.start-b.start);
+  if(!turns.length) return {turns:[],speakers:[]};
+  // 2) voice fingerprints (≈60%)
+  const embs=[]; const kept=[];
+  for(let i=0;i<turns.length;i++){
+    if(hooks.shouldStop && hooks.shouldStop()) return {turns:[],speakers:[]};
+    try{ embs.push(await embedTurn(audio,turns[i])); kept.push(turns[i]); }
+    catch(e){ console.error('embed',e); }
+    if(hooks.onProgress) hooks.onProgress(0.4+0.6*(i+1)/turns.length);
+    if(i%4===3) await new Promise(r=>setTimeout(r,0));
+  }
+  if(!embs.length) return {turns:[],speakers:[]};
+  // 3) cluster + rank
+  const ids=clusterEmbeddings(embs, CLUST_TH);
+  return rankSpeakers(kept, ids);
+}
+function speakerLabel(sp){
+  if(!sp) return '';
+  return sp.name && sp.name.trim() ? sp.name.trim() : `Person ${sp.gid+1}`;
+}
+// fill each segment's speaker from the turns (max temporal overlap); also tags seg.spk
+function assignSpeakers(segments, turns, speakers){
+  if(!turns || !turns.length) return 0;
+  const byGid={}; (speakers||[]).forEach(s=>byGid[s.gid]=s);
+  let labelled=0;
+  for(const seg of segments){
+    const acc={};
+    for(const t of turns){
+      const ov=Math.min(seg.end,t.end)-Math.max(seg.start,t.start);
+      if(ov>0) acc[t.gid]=(acc[t.gid]||0)+ov;
+    }
+    let best=-1, bv=0;
+    for(const g in acc){ if(acc[g]>bv){ bv=acc[g]; best=+g; } }
+    if(best>=0){ seg.spk=best; seg.speaker=speakerLabel(byGid[best]||{gid:best}); labelled++; }
+  }
+  return labelled;
+}
+
+/* ---------- speaker legend + naming ---------- */
+const SPK_COLORS=['#22d3ee','#f4b740','#a78bfa','#4ade80','#f472b6','#fb923c','#8b97af']; // P1..P6, P7 others
+const spkColor=gid=>SPK_COLORS[Math.min(gid,SPK_COLORS.length-1)];
+function spkRowHtml(sp, fi){
+  const fattr = fi==null ? '' : `data-f="${fi}" `;
+  const others = sp.gid===OTHERS_GID;
+  const ph = others ? 'Person 7 · others' : `Person ${sp.gid+1}`;
+  return `<div class="spk-row">
+    <span class="spk-dot" style="background:${spkColor(sp.gid)}"></span>
+    <input class="spk-name" ${fattr}data-gid="${sp.gid}" placeholder="${ph}" value="${esc(sp.name||'')}" />
+    <span class="spk-time">${fmt(sp.time)}</span>
+  </div>`;
+}
+function renderSpeakersPanel(){
+  const has = state.mode==='single' && state.speakers.length>0;
+  els.spkCard.style.display = has ? '' : 'none';
+  if(has) els.spkList.innerHTML = state.speakers.map(sp=>spkRowHtml(sp,null)).join('');
+}
+function spkLegendHtml(item, fi){
+  if(!item.speakers || !item.speakers.length) return '';
+  return `<div class="spk-legend">` + item.speakers.map(sp=>{
+    const others = sp.gid===OTHERS_GID;
+    const ph = others ? 'P7 · others' : `Person ${sp.gid+1}`;
+    return `<span class="spk-chip"><span class="spk-dot" style="background:${spkColor(sp.gid)}"></span>
+      <input class="spk-name" data-f="${fi}" data-gid="${sp.gid}" placeholder="${ph}" value="${esc(sp.name||'')}" /></span>`;
+  }).join('') + `</div>`;
+}
+// rename Person <gid> within one scope; updates state + visible rows surgically
+// (no innerHTML rebuild, so the input being typed in never loses focus)
+function renameSpeaker(fi, gid, name){
+  const scopeSegs = fi==null ? state.segments : ((state.batch[fi]||{}).segments||[]);
+  const speakers  = fi==null ? state.speakers : ((state.batch[fi]||{}).speakers||[]);
+  const sp=speakers.find(s=>s.gid===gid); if(!sp) return;
+  sp.name=name;
+  const label=speakerLabel(sp);
+  scopeSegs.forEach((seg,i)=>{
+    if(seg.spk!==gid) return;
+    seg.speaker=label;
+    const sel = fi==null ? `.seg-spk[data-i="${i}"]:not([data-f])` : `.seg-spk[data-f="${fi}"][data-i="${i}"]`;
+    const inp=els.segs.querySelector(sel);
+    if(inp) inp.value=label;
+  });
+}
+
+/* ---------- persistence (localStorage — transcripts + settings, never audio) ---------- */
+const SS_KEY='pandora.soundroom.session.v1';
+const SET_KEY='pandora.soundroom.settings.v1';
+let saveTimer=null, storageWarned=false;
+
+function saveSettings(){
+  try{ localStorage.setItem(SET_KEY, JSON.stringify({
+    model:els.model.value, lang:els.lang.value, diarize:els.diarize.checked, ts:els.tsToggle.checked })); }catch(_){}
+}
+function applySettings(){
+  let s=null; try{ s=JSON.parse(localStorage.getItem(SET_KEY)||'null'); }catch(_){}
+  if(!s) return;
+  if([...els.model.options].some(o=>o.value===s.model)) els.model.value=s.model;
+  if([...els.lang.options].some(o=>o.value===s.lang)) els.lang.value=s.lang;
+  els.diarize.checked=!!s.diarize;
+  els.tsToggle.checked=s.ts!==false;
+}
+function sessionPayload(){
+  if(state.mode==='batch'){
+    const files=state.batch.filter(it=>it.segments && it.segments.length)
+      .map(it=>({name:it.name, size:(it.file&&it.file.size)||it.size||0, duration:it.duration,
+                 usedLang:it.usedLang, segments:it.segments, speakers:it.speakers||[]}));
+    if(!files.length) return null;
+    return {v:1, savedAt:Date.now(), mode:'batch', usedModel:state.usedModel, files};
+  }
+  if(!state.segments.length) return null;
+  return {v:1, savedAt:Date.now(), mode:'single',
+    name:(state.file&&state.file.name)||'transcript', size:(state.file&&state.file.size)||0,
+    duration:state.duration, usedModel:state.usedModel, usedLang:state.usedLang,
+    segments:state.segments, speakers:state.speakers||[]};
+}
+function saveSession(){
+  const p=sessionPayload(); if(!p) return;
+  try{ localStorage.setItem(SS_KEY, JSON.stringify(p)); }
+  catch(e){ if(!storageWarned){ storageWarned=true; console.warn('session save failed',e);
+    els.log.textContent='Note: this session is too large to auto-save in this browser.'; } }
+}
+function scheduleSave(){ clearTimeout(saveTimer); saveTimer=setTimeout(saveSession, 800); }
+function clearSession(){ try{ localStorage.removeItem(SS_KEY); }catch(_){} hideRestore(); }
+function hideRestore(){ els.restoreBar.style.display='none'; }
+function fmtAgo(ts){
+  const m=Math.round((Date.now()-ts)/60000);
+  if(m<1) return 'just now'; if(m<60) return m+' min ago';
+  const h=Math.round(m/60); if(h<24) return h+' h ago';
+  return Math.round(h/24)+' d ago';
+}
+function checkRestore(){
+  let p=null; try{ p=JSON.parse(localStorage.getItem(SS_KEY)||'null'); }catch(_){}
+  if(!p || p.v!==1) return;
+  els.restoreMeta.textContent = p.mode==='batch'
+    ? `${p.files.length} files · ${p.files.reduce((a,f)=>a+f.segments.length,0)} lines · saved ${fmtAgo(p.savedAt)}`
+    : `${p.name} · ${p.segments.length} lines · saved ${fmtAgo(p.savedAt)}`;
+  els.restoreBar.style.display='';
+}
+function restoreSession(){
+  let p=null; try{ p=JSON.parse(localStorage.getItem(SS_KEY)||'null'); }catch(_){}
+  if(!p){ hideRestore(); return; }
+  if(p.mode==='batch'){
+    state.batch=p.files.map(f=>({file:null, name:f.name, size:f.size||0, audio:null, duration:f.duration||0,
+      segments:f.segments||[], speakers:f.speakers||[], status:'done', error:null, usedLang:f.usedLang||null}));
+    state.usedModel=p.usedModel||null;
+    setMode('batch');
+    renderQueue(); renderBatch(); updateExport(); updateGoState();
+    els.log.textContent=`Restored ${state.batch.length} file${state.batch.length===1?'':'s'} — edits and exports work; re-drop the audio files to re-run.`;
+  }else{
+    setMode('single');
+    state.file={name:p.name, size:p.size||0};   // metadata only — audio is never stored
+    state.audio=null; state.duration=p.duration||0;
+    state.trimStart=0; state.trimEnd=p.duration||0;
+    state.segments=p.segments||[]; state.speakers=p.speakers||[];
+    state.usedModel=p.usedModel||null; state.usedLang=p.usedLang||null;
+    els.fName.textContent=p.name.length>26?p.name.slice(0,24)+'…':p.name;
+    els.fLen.textContent=fmt(p.duration||0);
+    els.fRate.textContent='restored · audio not reloaded';
+    els.fileinfo.classList.add('show');
+    renderSegments(); renderSpeakersPanel(); updateExport(); updateGoState();
+    els.log.textContent='Session restored — edits and exports work; load the audio file again to re-transcribe.';
+  }
+  setStatus('ready','Restored');
+  hideRestore();
+}
+
+/* ---------- transcription core (shared by single + batch) ---------- */
+// Transcribes audio[clipStart..clipEnd] and returns {segments, usedLang}.
+// hooks: shouldStop(), onWindowStart(ws,nomEnd), onTick(frac,segments), onError(e)
+async function transcribeClip(t, audio, clipStart, clipEnd, langSel, hooks){
+  hooks = hooks || {};
+  const segments=[];
+  const start=clipStart, end=clipEnd, total=Math.max(0.001, end-start);
+  let lockedLang = langSel==='auto' ? null : langSel;   // null => let Whisper auto-detect
+  let usedLang = langSel==='auto' ? null : langSel;
+
+  for(let ws=start; ws<end; ws+=WIN_SEC){
+    if(hooks.shouldStop && hooks.shouldStop()) break;
+    const nomEnd=Math.min(ws+WIN_SEC, end);
+    const aStart=Math.max(start, ws-OVERLAP_SEC);   // a little context on each side…
+    const aEnd=Math.min(end, nomEnd+OVERLAP_SEC);   // …so boundary words aren't clipped
+    const clip=audio.slice(Math.floor(aStart*SR), Math.floor(aEnd*SR));
+    if(hooks.onWindowStart) hooks.onWindowStart(ws, nomEnd);
+
+    // silence guard — skip near-silent windows so Whisper can't hallucinate over them
+    let sq=0; for(let i=0;i<clip.length;i++){ const v=clip[i]; sq+=v*v; }
+    const rms = clip.length ? Math.sqrt(sq/clip.length) : 0;
+    if(rms < SILENCE_RMS){
+      if(hooks.onTick) hooks.onTick((nomEnd-start)/total, segments);
+      await new Promise(r=>setTimeout(r,0));
+      continue;
+    }
+
+    let out;
+    try{
+      out=await t(clip, {
+        return_timestamps:true,
+        return_language:true,
+        chunk_length_s:30,
+        stride_length_s:5,
+        language: lockedLang,
+        task:'transcribe',
+      });
+    }catch(e){
+      console.error(e);
+      if(hooks.onError) hooks.onError(e);
+      continue;
+    }
+
+    // language lock — reuse the first detected language for stability (best-effort)
+    if(langSel==='auto' && !lockedLang){
+      const det = out.language || (out.chunks && out.chunks[0] && out.chunks[0].language);
+      if(det){ lockedLang=det; usedLang=det; }
+    }
+
+    const chunks=(out.chunks && out.chunks.length)? out.chunks : [{timestamp:[0, aEnd-aStart], text:out.text}];
+    for(const ch of chunks){
+      const rel0=(ch.timestamp && ch.timestamp[0]!=null? ch.timestamp[0]:0);
+      const rel1=(ch.timestamp && ch.timestamp[1]!=null? ch.timestamp[1]:(aEnd-aStart));
+      const s=rel0+aStart, e2=rel1+aStart;
+      const txt=(ch.text||'').trim();
+      if(!txt) continue;
+      // own a chunk only if it starts inside this window's nominal span (overlap = context only)
+      if(s < ws-EPS || s >= nomEnd-EPS) continue;
+      // collapse consecutive identical text (guards against Whisper's looping hallucination)
+      const last=segments[segments.length-1];
+      if(last && last.text===txt && Math.abs(last.start - s) < DUP_WINDOW) continue;
+      segments.push({start:s, end:Math.min(e2,end), text:txt, speaker:''});
+    }
+    if(hooks.onTick) hooks.onTick((nomEnd-start)/total, segments);
+    await new Promise(r=>setTimeout(r,0));
+  }
+  return {segments, usedLang};
+}
+
+/* ---------- single-file run ---------- */
+async function runSingle(){
+  if(state.running || !state.audio) return;
+  state.running=true;
+  state.segments=[]; state.speakers=[]; renderSpeakersPanel();
+  els.go.disabled=true; els.stop.disabled=false;
+  els.prog.style.width='0%'; els.wavePct.textContent='0%';
+  els.playhead.classList.add('on'); setPlayhead(0);
+  renderSegments(); updateExport();
+
+  const modelId=els.model.value, langVal=els.lang.value;
+  let t;
+  try{ t=await ensureModel(modelId); }
+  catch(e){ els.log.textContent='Could not load model: '+e.message; finishRun(false); return; }
+
+  setStatus('working','Transcribing…');
+  state.usedModel=modelId; state.usedLang=null;
+  const span=Math.max(0.001, state.trimEnd-state.trimStart);
+  const res=await transcribeClip(t, state.audio, state.trimStart, state.trimEnd, langVal, {
+    shouldStop:()=>!state.running,
+    onWindowStart:(ws,ne)=>{ setPlayhead((ws-state.trimStart)/span); els.log.textContent=`Transcribing ${fmt(ws)} – ${fmt(ne)}…`; },
+    onTick:(frac,segs)=>{
+      state.segments=segs;
+      const dp=Math.round(frac*100); els.prog.style.width=dp+'%'; els.wavePct.textContent=dp+'%';
+      renderSegments(true); scheduleSave();
+    },
+    onError:(e)=>{ els.log.textContent='Segment error: '+e.message; },
+  });
+  state.segments=res.segments; state.usedLang=res.usedLang;
+  setPlayhead(1);
+  renderSegments(true);
+
+  // speaker identification (optional) — runs after transcription on the same span
+  if(els.diarize.checked && state.running && state.segments.length){
+    try{
+      await ensureDiarizer();
+      setStatus('working','Identifying speakers…');
+      els.prog.style.width='0%';
+      const res2=await diarizeAudio(state.audio, state.trimStart, state.trimEnd, {
+        shouldStop:()=>!state.running,
+        onProgress:(f)=>{ const dp=Math.round(f*100); els.prog.style.width=dp+'%'; els.wavePct.textContent=dp+'%'; els.log.textContent=`Identifying speakers… ${dp}%`; },
+        onError:(e)=>{ els.log.textContent='Speaker step issue: '+e.message; },
+      });
+      state.speakers=res2.speakers;
+      const n=assignSpeakers(state.segments, res2.turns, res2.speakers);
+      const main=res2.speakers.filter(s=>s.gid!==OTHERS_GID).length;
+      const hasOthers=res2.speakers.some(s=>s.gid===OTHERS_GID);
+      els.log.textContent = n
+        ? `Identified ${main} main speaker${main===1?'':'s'}${hasOthers?' + others':''} across ${n} lines — fill in names in the Speakers panel.`
+        : 'No speakers detected.';
+      renderSegments(true); renderSpeakersPanel(); scheduleSave();
+    }catch(e){ console.error(e); els.log.textContent='Speaker identification failed: '+e.message; }
+  }
+  finishRun(state.running);
+}
+
+/* ---------- batch run ---------- */
+async function runBatch(){
+  if(state.running || !state.batch.length) return;
+  state.running=true;
+  els.go.disabled=true; els.stop.disabled=false;
+  els.prog.style.width='0%'; els.wavePct.textContent='0%';
+
+  const modelId=els.model.value, langVal=els.lang.value;
+  state.usedModel=modelId;
+  let t;
+  try{ t=await ensureModel(modelId); }
+  catch(e){ els.log.textContent='Could not load model: '+e.message; finishRun(false); return; }
+
+  setStatus('working','Transcribing…');
+  const N=state.batch.length;
+  // count work already done so a resumed run still shows sensible progress
+  for(let fi=0; fi<N; fi++){
+    if(!state.running) break;
+    const item=state.batch[fi];
+    if(item.status==='done') continue;        // resume: skip completed files
+
+    item.status='active'; item.segments=[]; item.speakers=[]; item.error=null; renderQueue(); renderBatch();
+
+    if(!item.audio){                          // decode on demand if needed
+      item.status='decoding'; renderQueue();
+      try{ const {audio,duration}=await decodeFile(item.file); item.audio=audio; item.duration=duration; }
+      catch(e){ item.status='error'; item.error='decode failed'; renderQueue(); renderBatch(); updateExport(); continue; }
+      item.status='active'; renderQueue();
+    }
+
+    els.log.textContent=`File ${fi+1}/${N}: ${item.name}`;
+    const res=await transcribeClip(t, item.audio, 0, item.duration, langVal, {
+      shouldStop:()=>!state.running,
+      onWindowStart:(ws,ne)=>{ els.log.textContent=`File ${fi+1}/${N}: ${item.name} · ${fmt(ws)}–${fmt(ne)}`; },
+      onTick:(frac,segs)=>{
+        item.segments=segs;
+        const overall=(fi+frac)/N;
+        const dp=Math.round(overall*100); els.prog.style.width=dp+'%'; els.wavePct.textContent=dp+'%';
+        renderGroup(fi); scheduleSave();
+      },
+      onError:(e)=>{ els.log.textContent='Segment error: '+e.message; },
+    });
+    item.segments=res.segments; item.usedLang=res.usedLang;
+
+    // speaker identification (optional) — per file, before its audio is freed
+    if(els.diarize.checked && state.running && item.segments.length){
+      try{
+        await ensureDiarizer();
+        setStatus('working','Identifying speakers…');
+        const res2=await diarizeAudio(item.audio, 0, item.duration, {
+          shouldStop:()=>!state.running,
+          onProgress:(f)=>{ els.log.textContent=`File ${fi+1}/${N}: ${item.name} · speakers ${Math.round(f*100)}%`; },
+          onError:(e)=>{ els.log.textContent='Speaker step issue: '+e.message; },
+        });
+        item.speakers=res2.speakers;
+        assignSpeakers(item.segments, res2.turns, res2.speakers);
+        renderGroup(fi);
+      }catch(e){ console.error(e); els.log.textContent='Speaker identification failed: '+e.message; }
+    }
+
+    item.status = state.running ? 'done' : 'stopped';
+    item.audio=null;                          // free decoded audio after use (and after diarization)
+    renderQueue(); renderBatch(); updateExport(); saveSession();
+  }
+  if(state.running){ els.prog.style.width='100%'; els.wavePct.textContent='100%'; }
+  finishRun(state.running);
+}
+
+function finishRun(completed){
+  state.running=false;
+  els.stop.disabled=true;
+  saveSession();
+  updateGoState();
+  setStatus('ready', completed? 'Done' : 'Stopped');
+  if(state.mode==='batch'){
+    const done=state.batch.filter(it=>it.status==='done').length;
+    const segs=state.batch.reduce((a,it)=>a+((it.segments&&it.segments.length)||0),0);
+    els.log.textContent = completed
+      ? `Done — ${done} file${done===1?'':'s'}, ${segs} segments.`
+      : `Stopped — ${done}/${state.batch.length} files done.`;
+  } else {
+    els.log.textContent = completed
+      ? `Done — ${state.segments.length} segments.`
+      : `Stopped — ${state.segments.length} segments so far.`;
+  }
+  updateExport();
+}
+
+/* ---------- batch management ---------- */
+function setMode(m){
+  state.mode=m;
+  const batch = m==='batch';
+  els.batchCard.style.display = batch ? '' : 'none';
+  els.trimCard.style.display  = batch ? 'none' : '';
+  els.waveCard.style.display  = batch ? 'none' : '';
+  if(batch) els.fileinfo.classList.remove('show');
+  renderSpeakersPanel();
+  els.go.textContent = batch ? 'Transcribe all' : 'Transcribe';
+}
+function updateGoState(){
+  if(state.running){ els.go.disabled=true; return; }
+  els.go.disabled = state.mode==='batch'
+    ? !state.batch.some(it => it.audio || it.status==='ready' || it.status==='done')
+    : !state.audio;
+}
+function renderQueue(){
+  els.batchCount.textContent = state.batch.length ? `${state.batch.length}/${MAX_BATCH}` : '';
+  els.qlist.innerHTML = state.batch.map((it,i)=>{
+    const len = it.duration ? fmt(it.duration) : (it.status==='error' ? 'failed' : '…');
+    return `<div class="qrow">
+      <span class="qstat" data-st="${it.status}"></span>
+      <span class="qname" title="${esc(it.name)}">${esc(it.name)}</span>
+      <span class="qlen">${len}</span>
+      <button class="qx" data-x="${i}" ${state.running?'disabled':''} title="remove">×</button>
+    </div>`;
+  }).join('');
+  if(state.mode==='batch') els.go.textContent = `Transcribe all (${state.batch.length})`;
+  updateEta();
+}
+async function decodeEntry(item){
+  if(item.audio || item.status==='error' || item.status==='done') return;
+  item.status='decoding'; renderQueue();
+  try{
+    const {audio, duration}=await decodeFile(item.file);
+    item.audio=audio; item.duration=duration; item.status='ready';
+  }catch(e){
+    console.error(e); item.status='error'; item.error='decode failed';
+  }
+  renderQueue(); updateGoState(); updateExport();
+}
+async function decodePending(){
+  for(const it of state.batch){
+    if(it.status==='queued') await decodeEntry(it);
+  }
+}
+function addToBatch(files){
+  let added=0, rejected=0;
+  for(const f of files){
+    if(state.batch.length>=MAX_BATCH){ rejected++; continue; }
+    // duplicate by name → skip; but if it's a restored entry (no file handle), re-attach it
+    const match=state.batch.find(it=>it.name===f.name);
+    if(match){ if(!match.file) match.file=f; continue; }
+    state.batch.push({file:f, name:f.name, audio:null, duration:0, segments:[], speakers:[], status:'queued', error:null, usedLang:null});
+    added++;
+  }
+  hideRestore();
+  setMode('batch');
+  renderQueue(); renderBatch();
+  els.log.textContent = rejected>0
+    ? `Added ${added}. Queue is full at ${MAX_BATCH} — ${rejected} not added.`
+    : `${state.batch.length} file${state.batch.length===1?'':'s'} queued. Decoding…`;
+  decodePending().then(()=>{ if(state.batch.length && !state.running) els.log.textContent=`Ready — ${state.batch.length} file${state.batch.length===1?'':'s'}. Press Transcribe all.`; });
+}
+function removeBatchItem(i){
+  if(state.running) return;
+  state.batch.splice(i,1);
+  if(!state.batch.length){ clearBatch(); return; }
+  renderQueue(); renderBatch(); updateGoState();
+}
+function clearBatch(){
+  if(state.running) return;
+  state.batch=[];
+  clearSession();
+  setMode('single');
+  state.speakers=[]; renderSpeakersPanel();
+  els.qlist.innerHTML=''; els.batchCount.textContent='';
+  renderSegments(); updateExport(); updateGoState(); updateEta();
+  els.log.textContent='Load an audio file to begin.';
+}
+
+/* ---------- render ---------- */
+function renderSegments(scroll){
+  if(!state.segments.length){
+    els.segs.innerHTML='';
+    els.segs.appendChild(els.segsEmpty);
+    els.segsEmpty.style.display='flex';
+    return;
+  }
+  els.segsEmpty.style.display='none';
+  const showTs=els.tsToggle.checked;
+  els.segs.innerHTML=state.segments.map((s,i)=>{
+    const prev=state.segments[i-1];
+    const gap = prev ? (s.start - prev.end) : 0;
+    const turn = i>0 && gap > TURN_GAP
+      ? `<div class="turn-div"><span>pause ${gap.toFixed(1)}s</span></div>` : '';
+    return `${turn}
+    <div class="seg">
+      <div class="seg-time" style="${showTs?'':'visibility:hidden'}">${fmt(s.start)}</div>
+      <input class="seg-spk" data-i="${i}" placeholder="speaker" value="${esc(s.speaker)}" />
+      <div class="seg-txt" contenteditable="true" data-i="${i}" spellcheck="false">${esc(s.text)}</div>
+    </div>`;
+  }).join('');
+  if(scroll) els.segs.scrollTop=els.segs.scrollHeight;
+}
+function segRowHtml(s, i, fi, showTs, prev){
+  const gap = prev ? (s.start - prev.end) : 0;
+  const turn = i>0 && gap > TURN_GAP ? `<div class="turn-div"><span>pause ${gap.toFixed(1)}s</span></div>` : '';
+  const fattr = fi==null ? '' : `data-f="${fi}" `;
+  return `${turn}
+    <div class="seg">
+      <div class="seg-time" style="${showTs?'':'visibility:hidden'}">${fmt(s.start)}</div>
+      <input class="seg-spk" ${fattr}data-i="${i}" placeholder="speaker" value="${esc(s.speaker)}" />
+      <div class="seg-txt" contenteditable="true" ${fattr}data-i="${i}" spellcheck="false">${esc(s.text)}</div>
+    </div>`;
+}
+function fileGroupHtml(item, fi, showTs){
+  const segs=item.segments||[];
+  let body;
+  if(segs.length){
+    body = segs.map((s,i)=>segRowHtml(s,i,fi,showTs,segs[i-1])).join('');
+  }else{
+    const msg = item.status==='error' ? ('⚠ '+(item.error||'failed'))
+      : (item.status==='active'||item.status==='decoding') ? '…'
+      : item.status==='done' ? 'no speech detected'
+      : 'queued';
+    body = `<div class="qempty">${msg}</div>`;
+  }
+  const meta = `${item.duration?fmt(item.duration):''}${item.duration?' · ':''}${segs.length} seg · ${item.status}`;
+  return `<div class="filegroup" data-fg="${fi}"><div class="filehdr"><span class="fh-name" title="${esc(item.name)}">${esc(item.name)}</span><span class="fh-meta">${meta}</span></div>${spkLegendHtml(item,fi)}${body}</div>`;
+}
+function renderBatch(){
+  if(!state.batch.length){ els.segs.innerHTML=''; els.segs.appendChild(els.segsEmpty); els.segsEmpty.style.display='flex'; return; }
+  els.segsEmpty.style.display='none';
+  const showTs=els.tsToggle.checked;
+  els.segs.innerHTML = state.batch.map((item,fi)=>fileGroupHtml(item,fi,showTs)).join('');
+}
+// update just one file's section (used during a run so edits elsewhere aren't disturbed)
+function renderGroup(fi){
+  const node=els.segs.querySelector(`.filegroup[data-fg="${fi}"]`);
+  if(!node){ renderBatch(); return; }
+  node.outerHTML=fileGroupHtml(state.batch[fi], fi, els.tsToggle.checked);
+}
+els.segs.addEventListener('input', e=>{
+  const nameInp=e.target.closest('.spk-name');
+  if(nameInp){ renameSpeaker(nameInp.dataset.f!=null?+nameInp.dataset.f:null, +nameInp.dataset.gid, nameInp.value); return; }
+  const arrFor = el => (el.dataset.f!=null && el.dataset.f!=='') ? (state.batch[+el.dataset.f]||{}).segments : state.segments;
+  const spk=e.target.closest('.seg-spk');
+  if(spk){ const i=+spk.dataset.i; const arr=arrFor(spk); if(arr&&arr[i]){ arr[i].speaker=spk.value; arr[i].spk=null; } return; }
+  const txt=e.target.closest('.seg-txt');
+  if(txt && (txt.isContentEditable || txt.getAttribute('contenteditable')==='true')){ const i=+txt.dataset.i; const arr=arrFor(txt); if(arr&&arr[i]) arr[i].text=(txt.innerText!==undefined?txt.innerText:txt.textContent); }
+  scheduleSave();
+});
+els.spkList.addEventListener('input', e=>{
+  const inp=e.target.closest('.spk-name'); if(!inp) return;
+  renameSpeaker(null, +inp.dataset.gid, inp.value);
+  scheduleSave();
+});
+els.tsToggle.addEventListener('change', ()=> state.mode==='batch' ? renderBatch() : renderSegments());
+// queue interactions (remove / clear)
+els.qlist.addEventListener('click', e=>{
+  const x=e.target.closest('.qx'); if(x && !x.disabled) removeBatchItem(+x.dataset.x);
+});
+els.clearBatch.addEventListener('click', clearBatch);
+
+/* ---------- export ---------- */
+// Normalise single + batch into a common list of documents for export builders.
+function exportDocs(){
+  if(state.mode==='batch'){
+    return state.batch.filter(it=>it.segments && it.segments.length)
+      .map(it=>({ name:it.name, segments:it.segments, duration:it.duration, usedLang:it.usedLang, speakers:it.speakers||[] }));
+  }
+  return [{ name: state.file?state.file.name:'transcript', segments:state.segments, duration:state.duration, usedLang:state.usedLang, speakers:state.speakers||[] }];
+}
+function updateExport(){
+  const has = state.mode==='batch'
+    ? state.batch.some(it=>it.segments && it.segments.length)
+    : state.segments.length>0;
+  [els.copyBtn,els.txtBtn,els.srtBtn,els.vttBtn,els.jsonBtn,els.mdBtn].forEach(b=>b.disabled=!has);
+}
+function buildTxt(){
+  const docs=exportDocs(), showTs=els.tsToggle.checked, multi=docs.length>1;
+  return docs.map(d=>{
+    const lines=d.segments.map(s=>{
+      const ts=showTs?`[${fmt(s.start)}] `:'';
+      const sp=s.speaker?`${s.speaker}: `:'';
+      return ts+sp+s.text;
+    }).join('\n');
+    return multi ? `===== ${d.name} =====\n${lines}` : lines;
+  }).join('\n\n');
+}
+function buildSrt(){
+  const docs=exportDocs(), multi=docs.length>1;
+  let n=0;
+  return docs.map(d=>{
+    const cues=d.segments.map(s=>{
+      n++; const sp=s.speaker?`${s.speaker}: `:'';
+      return `${n}\n${srtTime(s.start)} --> ${srtTime(s.end)}\n${sp}${s.text}\n`;
+    }).join('\n');
+    return multi ? `; ${d.name}\n${cues}` : cues;   // filename marker as a comment line
+  }).join('\n');
+}
+function vttTime(sec){
+  sec=Math.max(0,sec||0);
+  const h=Math.floor(sec/3600), m=Math.floor((sec%3600)/60), s=Math.floor(sec%60), ms=Math.floor((sec-Math.floor(sec))*1000);
+  return `${String(h).padStart(2,'0')}:${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')}.${String(ms).padStart(3,'0')}`;
+}
+function buildVtt(){
+  const docs=exportDocs(), multi=docs.length>1;
+  let n=0;
+  const blocks=docs.map(d=>{
+    const cues=d.segments.map(s=>{
+      n++; const sp=s.speaker?`<v ${s.speaker}>`:'';
+      return `${n}\n${vttTime(s.start)} --> ${vttTime(s.end)}\n${sp}${s.text}\n`;
+    }).join('\n');
+    return multi ? `NOTE ${d.name}\n\n${cues}` : cues;  // NOTE is valid VTT comment syntax
+  }).join('\n');
+  return `WEBVTT\n\n${blocks}`;
+}
+function buildJson(){
+  const model = state.usedModel || els.model.value;
+  const lang  = (els.lang.value==='auto'?'auto':els.lang.value);
+  const fileObj = d => ({
+    file: d.name,
+    durationSec: +(d.duration||0).toFixed(3),
+    language: d.usedLang || lang,
+    speakers: (d.speakers||[]).map(sp=>({ label:speakerLabel(sp), person:sp.gid+1, others:sp.gid===OTHERS_GID||undefined, talkSec:+sp.time.toFixed(1) })),
+    segments: d.segments.map(s=>({ start:+s.start.toFixed(3), end:+s.end.toFixed(3), speaker:s.speaker||null, text:s.text })),
+  });
+  if(state.mode==='batch'){
+    return JSON.stringify({ model, generatedAt:new Date().toISOString(), files: exportDocs().map(fileObj) }, null, 2);
+  }
+  const d=exportDocs()[0];
+  return JSON.stringify(Object.assign({ source:d.name, model, generatedAt:new Date().toISOString() }, fileObj(d)), null, 2);
+}
+function buildMd(){
+  const docs=exportDocs(), showTs=els.tsToggle.checked, multi=docs.length>1;
+  const model = state.usedModel || els.model.value;
+  const renderBody = segs => segs.map((s,i)=>{
+    const prev=segs[i-1];
+    const brk = (prev && (s.start-prev.end)>TURN_GAP) ? '\n' : '';
+    const ts=showTs?`\`[${fmt(s.start)}]\` `:'';
+    const sp=s.speaker?`**${s.speaker}:** `:'';
+    return `${brk}${ts}${sp}${s.text}`;
+  }).join('\n\n');
+  if(multi){
+    const head=`# Batch transcript — ${docs.length} files\n\n*Model: ${model}*\n\n---\n\n`;
+    const sections=docs.map(d=>`## ${d.name}\n\n*${d.usedLang||''}${d.usedLang?' · ':''}${d.segments.length} segments*\n\n${renderBody(d.segments)}`).join('\n\n---\n\n');
+    return head+sections+'\n';
+  }
+  const d=docs[0];
+  const head=`# Transcript — ${d.name}\n\n*Model: ${model} · Language: ${d.usedLang || els.lang.value} · ${d.segments.length} segments*\n\n---\n\n`;
+  return head+renderBody(d.segments)+'\n';
+}
+function download(text, name){
+  const blob=new Blob([text],{type:'text/plain;charset=utf-8'});
+  const url=URL.createObjectURL(blob); const a=document.createElement('a');
+  a.href=url; a.download=name; a.click(); URL.revokeObjectURL(url);
+}
+const baseName=ext=>{
+  if(state.mode==='batch') return `batch-transcript-${state.batch.length}files`+ext;
+  return (state.file?state.file.name.replace(/\.[^.]+$/,''):'transcript')+ext;
+};
+els.copyBtn.addEventListener('click', async ()=>{
+  try{ await navigator.clipboard.writeText(buildTxt()); els.copyBtn.textContent='Copied'; setTimeout(()=>els.copyBtn.textContent='Copy',1200);}catch(e){els.log.textContent='Copy failed: '+e.message;}
+});
+els.txtBtn.addEventListener('click', ()=>download(buildTxt(), baseName('.txt')));
+els.srtBtn.addEventListener('click', ()=>download(buildSrt(), baseName('.srt')));
+els.vttBtn.addEventListener('click', ()=>download(buildVtt(), baseName('.vtt')));
+els.jsonBtn.addEventListener('click', ()=>download(buildJson(), baseName('.json')));
+els.mdBtn.addEventListener('click', ()=>download(buildMd(), baseName('.md')));
+
+/* ---------- file intake ---------- */
+async function handleFile(file){
+  if(!file) return;
+  hideRestore();
+  setMode('single');
+  state.speakers=[]; renderSpeakersPanel();
+  state.file=file;
+  els.go.disabled=true;
+  setStatus('loading','Decoding audio…');
+  els.log.textContent='Decoding '+file.name+'…';
+  els.waveEmpty.textContent='decoding…';
+  try{
+    const {audio, srcRate, duration}=await decodeFile(file);
+    state.audio=audio; state.duration=duration;
+    state.trimStart=0; state.trimEnd=duration;
+    els.rStart.min=0; els.rStart.max=1000; els.rStart.value=0;
+    els.rEnd.min=0; els.rEnd.max=1000; els.rEnd.value=1000;
+    els.fName.textContent=file.name.length>26?file.name.slice(0,24)+'…':file.name;
+    els.fLen.textContent=fmt(duration);
+    els.fRate.textContent=`mono · ${(SR/1000)}kHz (src ${(srcRate/1000).toFixed(1)}k)`;
+    els.fileinfo.classList.add('show');
+    els.waveEmpty.style.display='none';
+    refreshTrimLabels(); drawWave();
+    els.waveLabel.textContent=`${fmt(duration)} loaded`;
+    updateGoState();
+    setStatus('ready','Ready');
+    els.log.textContent='Ready. Set a trim span, then Transcribe.';
+    // auto-suggest last hour for long files
+    if(duration>4000){ els.log.textContent='Long file — consider trimming (e.g. Last 60m).'; }
+  }catch(e){
+    console.error(e);
+    setStatus('error','Decode failed');
+    els.waveEmpty.style.display='flex'; els.waveEmpty.textContent='decode failed';
+    els.log.textContent='Could not decode this file: '+e.message+' — try converting to mp3/wav first.';
+    updateGoState();
+  }
+}
+// routes single vs batch based on how many files arrive (and whether a queue already exists)
+function handleFiles(list){
+  const incoming=Array.from(list||[]).filter(Boolean);
+  if(!incoming.length) return;
+  if(state.mode==='batch'){ addToBatch(incoming); return; }
+  const existing = state.file ? [state.file] : [];
+  const all = existing.concat(incoming);
+  if(all.length===1){ handleFile(all[0]); return; }
+  state.file=null; state.audio=null; state.duration=0;   // leave single mode
+  addToBatch(all);
+}
+
+/* drag & drop + picker */
+els.drop.addEventListener('click', ()=>els.file.click());
+els.file.addEventListener('change', e=>{ handleFiles(e.target.files); e.target.value=''; });
+['dragenter','dragover'].forEach(ev=>els.drop.addEventListener(ev,e=>{e.preventDefault();els.drop.classList.add('over');}));
+['dragleave','drop'].forEach(ev=>els.drop.addEventListener(ev,e=>{e.preventDefault();els.drop.classList.remove('over');}));
+els.drop.addEventListener('drop', e=>{ if(e.dataTransfer.files.length) handleFiles(e.dataTransfer.files); });
+
+/* trim listeners */
+els.rStart.addEventListener('input', syncFromRanges);
+els.rEnd.addEventListener('input', syncFromRanges);
+document.querySelectorAll('.quick button').forEach(b=>b.addEventListener('click',()=>{
+  if(!state.duration) return;
+  const q=b.dataset.q, d=state.duration;
+  if(q==='full') setTrim(0,d);
+  else if(q==='last60') setTrim(Math.max(0,d-3600),d);
+  else if(q==='last30') setTrim(Math.max(0,d-1800),d);
+  else if(q==='first10') setTrim(0,Math.min(600,d));
+}));
+
+/* run / stop */
+els.go.addEventListener('click', ()=> state.mode==='batch' ? runBatch() : runSingle());
+els.stop.addEventListener('click', ()=>{ state.running=false; els.log.textContent='Stopping…'; });
+els.model.addEventListener('change', ()=>{ updateEta(); saveSettings(); });
+els.lang.addEventListener('change', saveSettings);
+els.diarize.addEventListener('change', saveSettings);
+els.tsToggle.addEventListener('change', saveSettings);
+
+/* restore banner */
+els.restoreYes.addEventListener('click', restoreSession);
+els.restoreNo.addEventListener('click', clearSession);
+
+/* apply saved settings, then offer to restore the previous session */
+applySettings();
+checkRestore();
+
+/* webgpu detect */
+(async ()=>{
+  try{
+    if('gpu' in navigator && navigator.gpu){
+      const adapter=await navigator.gpu.requestAdapter();
+      state.hasWebGPU=!!adapter;
+    }
+  }catch(_){ state.hasWebGPU=false; }
+  els.gpuHint.textContent = state.hasWebGPU
+    ? 'WebGPU acceleration available — faster.'
+    : 'Running on CPU (no WebGPU) — slower but works.';
+  updateEta();
+})();
+
+window.addEventListener('resize', ()=>{ if(state.audio) drawWave(); });
+setStatus('','Idle');
+</script>
+</body>
+</html>
